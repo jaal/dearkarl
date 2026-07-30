@@ -9,12 +9,26 @@ already has.
 Named after Karl — the mailman who always delivers. You write to
 *Dear Karl…*, Karl delivers.
 
+## Four steps, and only the last one repeats
+
+1. Deploy the Worker to your own Cloudflare domain. One script, about 15 minutes.
+2. You get a secret address that only you know.
+3. Forward anything to it, from any device: an email, an article, a note you
+   spoke into your phone.
+4. Your next Claude session opens with *"2 new things arrived"*.
+
+After that it is just forwarding. No app, no plugin, no copy-paste.
+
 ## Status: early
 
 The pipeline works end-to-end (it processes the author's real mail daily), but
 this repo is pre-1.0: the AI-driven install runbook and packaged hook/skill are
-still landing. Watch/star if you want the "tell Claude: install this" experience
-when it ships.
+still landing. Step 1 above is a shell script today; the plan is that you paste
+this repo's URL into Claude Code, say "install this", and it does the rest.
+Watch/star if you want that version when it ships.
+
+Want it without running anything yourself? There is a waiting list for a hosted
+version: <https://tally.so/r/jaXgz9>
 
 ## How it works
 
