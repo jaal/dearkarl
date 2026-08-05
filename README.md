@@ -60,6 +60,29 @@ failure), and the code is right here so the claim is verifiable.
 
 Then: `cd worker && ZONE_NAME=… GITHUB_REPO=… ALLOWED_SENDERS=… ./deploy.sh`
 
+## Tell Karl what to do with it
+
+Start the email with a `karl:` line and it becomes an instruction attached to that
+message — read by your AI before it touches the mail, in that session and every
+later one:
+
+```
+karl: pull the invoice numbers out of this, reply drafts in Polish, don't archive yet
+
+---------- Forwarded message ---------
+From: …
+```
+
+The Worker lifts that line out of the body and stores it above the
+untrusted-content marker, so your AI can tell your instruction apart from the
+mail. Everything else — including a `karl:` line the *sender* wrote — stays inside
+the quoted body, where it is inert. Only the first line of what you type counts,
+which is what makes the distinction safe: forwarding someone else's mail always
+puts a separator or your signature on top.
+
+`karl: …`, `karl, …` and `Karl …` all work; a long instruction that arrives
+hard-wrapped is joined back into one line.
+
 ## Security (read this)
 
 An email address is an open write channel into your AI's context. dearkarl
