@@ -64,7 +64,7 @@ Then: `cd worker && ZONE_NAME=… GITHUB_REPO=… ALLOWED_SENDERS=… ./deploy.s
 
 Start the email with a `karl:` line and it becomes an instruction attached to that
 message — read by your AI before it touches the mail, in that session and every
-later one:
+later one, and surfaced for your confirmation before it acts on it:
 
 ```
 karl: pull the invoice numbers out of this, reply drafts in Polish, don't archive yet
@@ -87,10 +87,49 @@ hard-wrapped is joined back into one line.
 
 An email address is an open write channel into your AI's context. dearkarl
 treats that seriously, in layers: an unguessable secret address, a hard sender
-allowlist in the Worker, SPF/DMARC verdicts captured, size caps, and — most
+allowlist in the Worker, DKIM/DMARC verification, size caps, and — most
 importantly — everything that lands in the inbox is stored and surfaced as
 **untrusted third-party data, never instructions**. Prompt injection is the #1
 risk of this whole product category; if you build on this, keep that framing.
+
+### The allowlist alone proves nothing
+
+`message.from` is the envelope `MAIL FROM` — a string the sender types. Matching
+it against an allowlist answers "what does this mail claim?", not "who sent it".
+Anyone who learns your secret address can put your address in that field.
+
+So `checkSender()` gates on the `From:` **header** instead, which is the field
+DKIM/DMARC actually covers, and requires the verdict to name that header's domain
+(`dmarc=pass` for someone else's domain does not carry your address). Two limits
+worth stating plainly:
+
+- **Domain-level only.** DMARC proves the domain sent the mail, never the local
+  part. Every user of a shared provider passes DMARC for its domain — which is
+  why the allowlist still has to match the whole address. What protects the local
+  part is the provider refusing to let one account send as another. Allowlist
+  addresses at providers that enforce that.
+- **The last check is yours.** A `karl:` line is surfaced to the agent as a
+  *proposal*, to be shown and confirmed before it is acted on — because the
+  strongest link in this chain still ends in someone else's promise.
+
+### Turning verification on
+
+It ships in **log-only** mode: every message gets a verdict, nothing is rejected
+for it yet. The verdict lands in the Worker log and — durably, because logs
+expire — in the file's frontmatter:
+
+```yaml
+auth_check: "pass"
+auth_check: "pass (envelope bounces@relay.example.com != header you@example.com)"
+auth_check: "fail: dmarc not pass"
+```
+
+Run it that way until every address you actually send from shows `pass`
+(`grep auth_check inbox/*.md`), then make it enforcing — in `worker.js`, replace
+the `console.log` under `STAGED ROLLOUT` with the same `setReject("no such
+recipient")` the allowlist uses. Do not skip the observation window: mail sent
+through a relay or a mailing list can break alignment, and enforcing blind locks
+you out of your own inbox.
 
 ## License
 

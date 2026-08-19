@@ -59,8 +59,41 @@ function extractCommand(body) {
   return { command, body: lines.slice(i).join("\n").replace(/^\n+/, "") };
 }
 
+// The allowlist alone proves nothing: message.from is the envelope MAIL FROM, a
+// string the sender types. DKIM/DMARC covers the From: HEADER instead, so gate on
+// that field and require the verdict to name its domain. Domain-level only: DMARC
+// proves the DOMAIN sent this, never the local part. What binds the local part is
+// the sending provider refusing to let one account write another's From: header —
+// so allowlist addresses at providers that enforce it. Pure, so the test harness
+// can cover it without a network.
+const HEADER_ADDR = /<([^>]+)>|(\S+@\S+)/;
+
+export function checkSender({ headerFrom = "", envelopeFrom = "", authResults = "", allowed = [] }) {
+  const m = HEADER_ADDR.exec(headerFrom) || [];
+  const address = (m[1] || m[2] || "").toLowerCase().trim();
+  const domain = address.split("@")[1] || "";
+  const envelopeAligned = !envelopeFrom || envelopeFrom.toLowerCase() === address;
+  const no = (reason) => ({ address, domain, envelopeAligned, ok: false, reason });
+
+  if (!address) return no("no parsable From: header");
+  if (!domain) return no(`From: header has no domain (${address})`);
+  if (!allowed.includes(address)) return no(`From: header not allowlisted (${address})`);
+  if (!/dmarc=pass/i.test(authResults)) return no("dmarc not pass");
+  // Bind the verdict to this domain — any dmarc=pass in the header is not enough.
+  const aligned = new RegExp(`header\\.from=${domain.replace(/[.\\]/g, "\\$&")}(\\s|;|$)`, "i");
+  if (!aligned.test(authResults)) return no(`dmarc verdict not aligned with ${domain}`);
+
+  return { address, domain, envelopeAligned, ok: true, reason: "" };
+}
+
+// One short string for the frontmatter — logs are ephemeral, the repo is not.
+export function authCheckLine(v, envelopeFrom) {
+  if (!v.ok) return `fail: ${v.reason}`;
+  return v.envelopeAligned ? "pass" : `pass (envelope ${envelopeFrom} != header ${v.address})`;
+}
+
 // Exported for the test harness — pure: raw MIME + metadata in, file out.
-export async function renderEmail(raw, { from, to, headerSubject, authResults, now }) {
+export async function renderEmail(raw, { from, to, headerSubject, authResults, authCheck = "", now }) {
   let parsed = null;
   try {
     parsed = await PostalMime.parse(raw);
@@ -112,6 +145,7 @@ export async function renderEmail(raw, { from, to, headerSubject, authResults, n
     `subject: ${JSON.stringify(subject)}`,
     `date: ${now.toISOString()}`,
     `auth: ${JSON.stringify(authResults)}`,
+    `auth_check: ${JSON.stringify(authCheck)}`,
     "status: unread",
     `format: ${JSON.stringify(format)}`,
     `truncated: ${truncated}`,
@@ -159,12 +193,27 @@ export default {
       return;
     }
 
+    const authResults = message.headers.get("authentication-results") || "";
+    const verdict = checkSender({
+      headerFrom: message.headers.get("from") || "",
+      envelopeFrom: from,
+      authResults,
+      allowed,
+    });
+    const authCheck = authCheckLine(verdict, from);
+
+    // STAGED ROLLOUT — log-only. Once the log and the auth_check frontmatter show
+    // a week of clean verdicts for every address you actually send from, turn the
+    // line below into the same setReject("no such recipient") as the allowlist.
+    if (!verdict.ok) console.log(`auth check would reject: ${verdict.reason} (${from})`);
+
     const raw = await new Response(message.raw).text();
     const { path, file, subject } = await renderEmail(raw, {
       from,
       to: message.to,
       headerSubject: message.headers.get("subject") || "",
-      authResults: message.headers.get("authentication-results") || "",
+      authResults,
+      authCheck,
       now: new Date(),
     });
 

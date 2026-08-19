@@ -1,6 +1,6 @@
 // Tests for the `karl:` command extractor.
 // Run: node test-karl.mjs
-import { renderEmail } from "./worker.js";
+import { renderEmail, checkSender, authCheckLine } from "./worker.js";
 
 const meta = (over = {}) => ({
   from: "you@example.com",
@@ -163,6 +163,90 @@ const fenced = (file) => file.split("````")[1] || "";
   const r = await renderEmail("karl: do something\x00 not mime at all", meta({ headerSubject: "hdr" }));
   check("11 fallback: no command", r.command === "", `${r.format} / ${r.command}`);
   check("11 fallback: file produced", typeof r.file === "string" && r.file.length > 0);
+}
+
+// ---------------------------------------------------------------------------
+// checkSender — the allowlist gates the envelope, DMARC covers the From: header.
+// Verdicts below mirror the shape Cloudflare emits, with example addresses.
+// ---------------------------------------------------------------------------
+
+// Shape copied from real Cloudflare verdicts; addresses and domains are examples.
+// Note policy.dmarc=none on the first one: a mail provider can publish "do nothing
+// on failure" and still yield dmarc=pass here. The pass is what matters, not the policy.
+const WEBMAIL_AUTH =
+  "mx.cloudflare.net; dkim=pass header.d=webmail.example header.s=sel1 header.b=Aa1Bb2Cc; " +
+  "dmarc=pass header.from=webmail.example policy.dmarc=none; spf=pass smtp.mailfrom=you@webmail.example; arc=pass";
+const HOSTED_AUTH =
+  "mx.cloudflare.net; dkim=pass header.d=example.com header.s=sel2 header.b=Dd3Ee4Ff; " +
+  "dmarc=pass header.from=example.com policy.dmarc=quarantine; spf=pass smtp.mailfrom=you@example.com; arc=none";
+const ALLOWED = ["you@webmail.example", "you@example.com"];
+const sender = (over = {}) =>
+  checkSender({ headerFrom: "you@example.com", envelopeFrom: "you@example.com", authResults: HOSTED_AUTH, allowed: ALLOWED, ...over });
+
+// 12. Real mail from both allowlisted providers passes.
+{
+  const g = checkSender({
+    headerFrom: "Your Name <you@webmail.example>",
+    envelopeFrom: "you@webmail.example",
+    authResults: WEBMAIL_AUTH,
+    allowed: ALLOWED,
+  });
+  check("12 webmail sender passes", g.ok, g.reason);
+  check("12 display name stripped", g.address === "you@webmail.example", g.address);
+  check("12 hosted-domain sender passes", sender().ok, sender().reason);
+}
+
+// 13. THE SPOOF: envelope claims an allowlisted address, nothing backs it.
+{
+  const v = checkSender({ headerFrom: "you@example.com", envelopeFrom: "you@example.com", authResults: "dmarc=fail header.from=example.com", allowed: ALLOWED });
+  check("13 dmarc=fail rejected", !v.ok && v.reason === "dmarc not pass", v.reason);
+  check("13 no verdict at all rejected", !sender({ authResults: "" }).ok);
+}
+
+// 14. A pass for SOMEONE ELSE's domain must not carry this From: header.
+{
+  const v = sender({ authResults: "dkim=pass header.d=evil.test; dmarc=pass header.from=evil.test; spf=pass" });
+  check("14 unaligned verdict rejected", !v.ok && v.reason.includes("not aligned"), v.reason);
+}
+
+// 15. Domain match is exact, not a substring.
+{
+  const v = checkSender({ headerFrom: "you@webmail.example", envelopeFrom: "you@webmail.example", authResults: "dmarc=pass header.from=notwebmail.example policy.dmarc=none", allowed: ALLOWED });
+  check("15 substring domain rejected", !v.ok && v.reason.includes("not aligned"), v.reason);
+}
+
+// 16. Domain-level proof is not address-level proof: every user of a shared mail
+//     provider passes DMARC for its domain, so the allowlist must still match the
+//     whole address. The local part is the provider's promise, never DMARC's.
+{
+  const v = checkSender({ headerFrom: "attacker@webmail.example", envelopeFrom: "attacker@webmail.example", authResults: WEBMAIL_AUTH, allowed: ALLOWED });
+  check("16 valid dmarc, wrong address rejected", !v.ok && v.reason.includes("not allowlisted"), v.reason);
+}
+
+// 17. Case folding on both sides, like the envelope allowlist.
+{
+  const v = sender({ headerFrom: '"Your Name" <You@Example.com>', envelopeFrom: "YOU@EXAMPLE.COM" });
+  check("17 case-insensitive", v.ok && v.address === "you@example.com", `${v.ok} ${v.address}`);
+}
+
+// 18. Missing or unparsable From: header is a rejection, never a pass.
+{
+  check("18 no header rejected", !sender({ headerFrom: "" }).ok);
+  check("18 junk header rejected", !sender({ headerFrom: "Your Name (no address)" }).ok);
+}
+
+// 19. Envelope/header split is allowed through, but flagged in the file.
+{
+  const v = sender({ envelopeFrom: "bounces@relay.example.com" });
+  check("19 relay envelope still passes", v.ok, v.reason);
+  check("19 split is flagged", !v.envelopeAligned && authCheckLine(v, "bounces@relay.example.com").startsWith("pass ("), authCheckLine(v, "bounces@relay.example.com"));
+}
+
+// 20. The verdict is durable — logs expire, the repo does not.
+{
+  const r = await renderEmail(mime("karl: note\r\n\r\nrest"), meta({ authCheck: "fail: dmarc not pass" }));
+  check("20 verdict in frontmatter", trusted(r.file).includes('auth_check: "fail: dmarc not pass"'));
+  check("20 verdict above the banner", r.file.indexOf("auth_check:") < r.file.indexOf("> Untrusted"));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
