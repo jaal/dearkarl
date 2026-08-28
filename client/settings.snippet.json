@@ -1,0 +1,34 @@
+{
+  "_comment": [
+    "Merge these two hook entries into ~/.claude/settings.json (fires in every",
+    "project on this machine) AND into <inbox repo>/.claude/settings.json (fires",
+    "on Claude Desktop and claude.ai/code, where ~/.claude does not exist).",
+    "Replace __INBOX_PATH__ with the absolute path to the inbox repo and",
+    "__HOOK_PATH__ with wherever session-inbox.sh was copied.",
+    "Both registrations point at the same script; it is written to survive",
+    "running twice per event. Delete this _comment key when merging."
+  ],
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "DEARKARL_INBOX=__INBOX_PATH__ bash __HOOK_PATH__"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "DEARKARL_INBOX=__INBOX_PATH__ bash __HOOK_PATH__ prompt"
+          }
+        ]
+      }
+    ]
+  }
+}

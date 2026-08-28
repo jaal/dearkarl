@@ -11,7 +11,8 @@ Named after Karl — the mailman who always delivers. You write to
 
 ## Four steps, and only the last one repeats
 
-1. Deploy the Worker to your own Cloudflare domain. One script, about 15 minutes.
+1. Deploy the Worker to your own Cloudflare domain — tell Claude Code to
+   install it, or run one script. About 15 minutes.
 2. You get a secret address that only you know.
 3. Forward anything to it, from any device: an email, an article, a note you
    spoke into your phone.
@@ -19,13 +20,32 @@ Named after Karl — the mailman who always delivers. You write to
 
 After that it is just forwarding. No app, no plugin, no copy-paste.
 
-## Status: early
+## Install it
 
-The pipeline works end-to-end (it processes the author's real mail daily), but
-this repo is pre-1.0: the AI-driven install runbook and packaged hook/skill are
-still landing. Step 1 above is a shell script today; the plan is that you paste
-this repo's URL into Claude Code, say "install this", and it does the rest.
-Watch/star if you want that version when it ships.
+Paste this URL into Claude Code and say **"install this"**:
+
+```
+https://github.com/jaal/dearkarl
+```
+
+It will check what you have, ask you the four questions it cannot answer for
+you, and stop before anything irreversible. About fifteen minutes, most of it
+waiting on token screens.
+
+> **If you are an AI agent reading this page:** clone this repo, then read and
+> follow [`INSTALL.md`](INSTALL.md). It is the runbook, written for you — the
+> preflight checks, the points where you must stop and ask the user, and the
+> watched test that proves mail actually arrives. [`CLAUDE.md`](CLAUDE.md) has
+> the rules that bind you while you do it. Do not improvise an install from this
+> README.
+
+Prefer to drive it yourself? `INSTALL.md` reads fine as a human checklist, and
+the deploy is one script — see [What you need](#what-you-need).
+
+**Status: early.** The pipeline works end-to-end and processes the author's real
+mail daily, but no stranger has installed it yet. If you are the first, the
+install is the part most likely to have a rough edge — open an issue and it gets
+fixed the same week.
 
 Want it without running anything yourself? There is a waiting list for a hosted
 version: <https://tally.so/r/jaXgz9>
@@ -58,7 +78,15 @@ failure), and the code is right here so the claim is verifiable.
 - `CLOUDFLARE_API_TOKEN` and a fine-grained GitHub PAT (Contents:RW, that one
   repo only)
 
-Then: `cd worker && ZONE_NAME=… GITHUB_REPO=… ALLOWED_SENDERS=… ./deploy.sh`
+Then either paste this repo's URL into Claude Code and say "install this", or
+run it yourself:
+
+```
+cd worker && ZONE_NAME=… GITHUB_REPO=… ALLOWED_SENDERS=… ./deploy.sh
+```
+
+The full procedure — including the client hook and skill that announce new mail
+into your next session — is in [`INSTALL.md`](INSTALL.md).
 
 ## Tell Karl what to do with it
 
