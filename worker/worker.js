@@ -202,10 +202,22 @@ export default {
     });
     const authCheck = authCheckLine(verdict, from);
 
-    // STAGED ROLLOUT — log-only. Once the log and the auth_check frontmatter show
-    // a week of clean verdicts for every address you actually send from, turn the
-    // line below into the same setReject("no such recipient") as the allowlist.
-    if (!verdict.ok) console.log(`auth check would reject: ${verdict.reason} (${from})`);
+    // STAGED BY DEFAULT. A fresh install logs the verdict and delivers anyway,
+    // because enforcing before you know your own DMARC alignment locks you out of
+    // your own inbox — relays and mailing lists rewrite the From: header, and the
+    // bounce gives you nothing to debug with. Watch `grep auth_check inbox/*.md`
+    // until every address you really send from reads "pass", then set the
+    // AUTH_ENFORCE binding to "1" and re-upload. That is the whole flip.
+    if (!verdict.ok) {
+      const enforcing = env.AUTH_ENFORCE === "1";
+      console.log(
+        `auth check ${enforcing ? "reject" : "would reject"}: ${verdict.reason} (${from})`
+      );
+      if (enforcing) {
+        message.setReject("no such recipient");
+        return;
+      }
+    }
 
     const raw = await new Response(message.raw).text();
     const { path, file, subject } = await renderEmail(raw, {

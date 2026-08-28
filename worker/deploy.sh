@@ -8,6 +8,11 @@
 #   GITHUB_TOKEN_FOR_WORKER — fine-grained PAT (Contents:RW on the inbox repo
 #                             ONLY). Omit to deploy in log-only mode.
 #   SEND_TO_ADDRESS         — full secret address; generated if unset.
+#   AUTH_ENFORCE            — "1" rejects mail whose From: header fails DMARC.
+#                             Leave unset on a first install: watch
+#                             `grep auth_check inbox/*.md` until every address
+#                             you send from reads "pass", then set it and
+#                             re-upload. Enforcing blind locks you out.
 #
 # Usage: ./deploy.sh   (from the worker/ directory)
 set -euo pipefail
@@ -52,6 +57,12 @@ echo "no MX records — safe to enable Email Routing."
 
 echo "== Uploading worker script =="
 BINDINGS='[{"type":"plain_text","name":"ALLOWED_SENDERS","text":"'"$ALLOWED_SENDERS"'"},{"type":"plain_text","name":"GITHUB_REPO","text":"'"$GITHUB_REPO"'"}'
+if [ -n "${AUTH_ENFORCE:-}" ]; then
+  BINDINGS+=',{"type":"plain_text","name":"AUTH_ENFORCE","text":"'"$AUTH_ENFORCE"'"}'
+  echo "(AUTH_ENFORCE=$AUTH_ENFORCE — DMARC failures will be rejected)"
+else
+  echo "(no AUTH_ENFORCE — DMARC verdicts logged only, mail delivered)"
+fi
 if [ -n "${GITHUB_TOKEN_FOR_WORKER:-}" ]; then
   BINDINGS+=',{"type":"secret_text","name":"GITHUB_TOKEN","text":"'"$GITHUB_TOKEN_FOR_WORKER"'"}'
   echo "(with GITHUB_TOKEN secret — commit mode)"
