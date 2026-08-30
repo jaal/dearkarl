@@ -177,8 +177,9 @@ export default {
       .filter(Boolean);
 
     if (!allowed.includes(from)) {
-      // Metadata only — never log bodies (the keeps-nothing rule).
-      console.log(`rejected: sender not allowlisted (${from} -> ${message.to})`);
+      // Outcome only. The sender's address is not metadata and the recipient
+      // is the secret address itself — neither may reach a log (NN 3.1, NN 5.1).
+      console.log("rejected: sender not allowlisted");
       message.setReject("no such recipient");
       return;
     }
@@ -186,7 +187,7 @@ export default {
     if (message.rawSize > MAX_RAW_BYTES) {
       // Put the numbers in the bounce itself — it is the only diagnostic the
       // sender ever sees, and sizes leak nothing the sender doesn't know.
-      console.log(`rejected: too large (${message.rawSize} bytes from ${from})`);
+      console.log(`rejected: too large (${message.rawSize} bytes)`);
       message.setReject(
         `message too large (${mb(message.rawSize)}, limit ${mb(MAX_RAW_BYTES)})`
       );
@@ -210,8 +211,9 @@ export default {
     // AUTH_ENFORCE binding to "1" and re-upload. That is the whole flip.
     if (!verdict.ok) {
       const enforcing = env.AUTH_ENFORCE === "1";
+      // The reason is an error class and may be logged; the address may not.
       console.log(
-        `auth check ${enforcing ? "reject" : "would reject"}: ${verdict.reason} (${from})`
+        `auth check ${enforcing ? "reject" : "would reject"}: ${verdict.reason}`
       );
       if (enforcing) {
         message.setReject("no such recipient");
@@ -231,7 +233,7 @@ export default {
 
     if (!env.GITHUB_TOKEN) {
       console.log(
-        `log-only mode: would commit ${path} (${message.rawSize} bytes, subject "${subject}")`
+        `log-only mode: would commit ${logRef(path)} (${message.rawSize} bytes)`
       );
       return;
     }
@@ -255,13 +257,26 @@ export default {
 
     if (!res.ok) {
       // Bounce so the sender's server retries later — never queue on our side.
-      console.log(`github commit failed: ${res.status} for ${path}`);
+      console.log(`github commit failed: ${res.status} for ${logRef(path)}`);
       message.setReject("temporary storage failure, please retry");
       return;
     }
-    console.log(`committed ${path}`);
+    console.log(`committed ${logRef(path)}`);
   },
 };
+
+/**
+ * A log-safe reference to a stored message: the timestamp, never the slug.
+ *
+ * Paths are `inbox/<stamp>-<subject-slug>.md`, so logging a path logs the
+ * subject — which NN 3.1 forbids as plainly as logging the body. The stamp is
+ * a timestamp, which 3.1 permits, and it is still enough to line a log line up
+ * with a file in the inbox.
+ */
+function logRef(path) {
+  const m = path.match(/^(inbox\/\d{4}(?:-\d{2}){5})-/);
+  return m ? m[1] : "inbox/(unparsed)";
+}
 
 function mb(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
