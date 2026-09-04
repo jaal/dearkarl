@@ -1,6 +1,6 @@
 // Tests for the `karl:` command extractor.
 // Run: node test-karl.mjs
-import { renderEmail, checkSender, authCheckLine } from "./worker.js";
+import worker, { renderEmail, checkSender, authCheckLine } from "./worker.js";
 
 const meta = (over = {}) => ({
   from: "you@example.com",
@@ -247,6 +247,127 @@ const sender = (over = {}) =>
   const r = await renderEmail(mime("karl: note\r\n\r\nrest"), meta({ authCheck: "fail: dmarc not pass" }));
   check("20 verdict in frontmatter", trusted(r.file).includes('auth_check: "fail: dmarc not pass"'));
   check("20 verdict above the banner", r.file.indexOf("auth_check:") < r.file.indexOf("> Untrusted"));
+}
+
+// ---------------------------------------------------------------------------
+// 21. Logs carry no content.
+//
+// NN 3.1 permits timestamps, sizes, outcomes and error classes, and nothing
+// else. NN 5.1 puts the secret address outside every log. This does not test
+// the fix that made that true — it tests the property, so a debug line added
+// in a year fails here instead of in production.
+//
+// The canaries are deliberately distinctive and synthetic (NN 10.2). Any log
+// line that echoes a sender, a recipient or a subject contains one of them,
+// however it got there — including via the stored path, which is
+// `inbox/<stamp>-<subject-slug>.md` and therefore carries the subject.
+// ---------------------------------------------------------------------------
+
+const CANARY_FROM = "canary-sender@example.invalid";
+const CANARY_TO = "karl-canarysecret@example.invalid";
+const CANARY_SUBJECT = "ZZZ Canary Subject Do Not Log";
+const CANARY_SLUG = "zzz-canary-subject-do-not-log";
+
+const canaryMime = [
+  `From: Canary <${CANARY_FROM}>`,
+  `To: ${CANARY_TO}`,
+  `Subject: ${CANARY_SUBJECT}`,
+  "MIME-Version: 1.0",
+  'Content-Type: text/plain; charset="utf-8"',
+  "",
+  "body text that must never be logged either",
+].join("\r\n");
+
+const fakeMessage = (over = {}) => ({
+  from: CANARY_FROM,
+  to: CANARY_TO,
+  rawSize: 2048,
+  raw: canaryMime,
+  headers: new Map([
+    ["from", `Canary <${CANARY_FROM}>`],
+    ["subject", CANARY_SUBJECT],
+    ["authentication-results", "dkim=pass header.d=example.invalid"],
+  ]),
+  setReject() {},
+  ...over,
+});
+
+// Run one path with console.log captured, and give back what it printed.
+async function captureLogs(message, env) {
+  const lines = [];
+  const real = console.log;
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    await worker.email(message, env);
+  } catch (err) {
+    lines.push(`threw: ${err && err.message}`);
+  } finally {
+    console.log = real;
+  }
+  return lines;
+}
+
+const LEAKS = [
+  ["sender address", CANARY_FROM],
+  ["recipient (the secret address)", CANARY_TO],
+  ["subject", CANARY_SUBJECT],
+  ["subject via the path slug", CANARY_SLUG],
+];
+
+function assertClean(pathName, lines) {
+  const haystack = lines.join("\n").toLowerCase();
+  for (const [what, needle] of LEAKS) {
+    check(
+      `21 ${pathName}: no ${what}`,
+      !haystack.includes(needle.toLowerCase()),
+      `logged: ${JSON.stringify(lines)}`
+    );
+  }
+}
+
+// Every path that logs, including the two that only run when something breaks.
+{
+  // a. Sender not on the allowlist.
+  assertClean("allowlist reject", await captureLogs(fakeMessage(), { ALLOWED_SENDERS: "someone-else@example.invalid" }));
+
+  // b. Oversized message.
+  assertClean(
+    "size reject",
+    await captureLogs(fakeMessage({ rawSize: 6 * 1024 * 1024 }), { ALLOWED_SENDERS: CANARY_FROM })
+  );
+
+  // c. Sender verification fails (staged, so it logs and continues).
+  assertClean(
+    "auth verdict",
+    await captureLogs(
+      fakeMessage({ headers: new Map([["from", "Someone <spoofed@example.invalid>"], ["authentication-results", "dkim=none"]]) }),
+      { ALLOWED_SENDERS: CANARY_FROM }
+    )
+  );
+
+  // d. Log-only mode — no GITHUB_TOKEN bound.
+  assertClean("log-only mode", await captureLogs(fakeMessage(), { ALLOWED_SENDERS: CANARY_FROM }));
+
+  // e. and f. Commit success and commit failure, with the GitHub call stubbed.
+  const realFetch = globalThis.fetch;
+  for (const [name, ok, status] of [["commit success", true, 201], ["commit failure", false, 502]]) {
+    globalThis.fetch = async () => ({ ok, status });
+    assertClean(
+      name,
+      await captureLogs(fakeMessage(), {
+        ALLOWED_SENDERS: CANARY_FROM,
+        GITHUB_REPO: "owner/repo",
+        GITHUB_TOKEN: "not-a-real-token",
+      })
+    );
+  }
+  globalThis.fetch = realFetch;
+}
+
+// The canaries only prove anything if the paths actually logged something.
+{
+  const lines = await captureLogs(fakeMessage(), { ALLOWED_SENDERS: "someone-else@example.invalid" });
+  check("21 the capture works at all", lines.length > 0, "no log lines captured — the test would pass vacuously");
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
